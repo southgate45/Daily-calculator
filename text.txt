@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>Driver Daily</title>
+  <meta name="theme-color" content="#0b5cff" />
+  <!-- iOS add-to-home tweaks -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="apple-touch-icon" href="icon-512.png">
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" href="data:image/svg+xml;utf8,<?xml version='1.0' encoding='UTF-8'?><svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 128 128'><rect width='128' height='128' rx='20' fill='%230b5cff'/><path d='M26 82h76v10H26zM30 36h68v8H30zm0 16h68v8H30zm0 16h40v8H30z' fill='white'/></svg>">
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+<header class="appbar">
+  <h1>Driver Daily</h1>
+  <button id="openSettings" class="ghost">Settings</button>
+</header>
+
+<main class="container">
+  <section class="card">
+    <h2>Add Load / Daily Entry</h2>
+    <form id="entryForm" autocomplete="off">
+      <div class="grid">
+        <label>Date
+          <input type="date" id="date" required />
+        </label>
+        <label>Order #
+          <input type="text" id="order" placeholder="e.g. 0561850" />
+        </label>
+        <label>Origin
+          <input type="text" id="origin" placeholder="City, ST" />
+        </label>
+        <label>Destination
+          <input type="text" id="destination" placeholder="City, ST" />
+        </label>
+        <label>Loaded miles
+          <input type="number" id="loadedMiles" step="1" min="0" value="0" />
+        </label>
+        <label>Empty miles
+          <input type="number" id="emptyMiles" step="1" min="0" value="0" />
+        </label>
+        <label>Order gross ($)
+          <input type="number" id="gross" step="0.01" min="0" value="0" required />
+        </label>
+        <label>FSC/Reimb ($)
+          <input type="number" id="reimb" step="0.01" min="0" value="0" />
+        </label>
+        <label>Advance ($)
+          <input type="number" id="advance" step="0.01" min="0" value="0" />
+        </label>
+        <label>DEF ($)
+          <input type="number" id="def" step="0.01" min="0" value="0" />
+        </label>
+        <label>Tolls ($)
+          <input type="number" id="tolls" step="0.01" min="0" value="0" />
+        </label>
+      </div>
+
+      <details class="inline-details">
+        <summary>Fuel & MPG (optional per-day override)</summary>
+        <div class="grid">
+          <label>Avg pump price ($/gal)
+            <input type="number" id="pump" step="0.01" min="0" placeholder="defaults from Settings" />
+          </label>
+          <label>Fuel discount ($/gal)
+            <input type="number" id="discount" step="0.01" min="0" placeholder="defaults from Settings" />
+          </label>
+          <label>MPG
+            <input type="number" id="mpg" step="0.01" min="0" placeholder="defaults from Settings" />
+          </label>
+        </div>
+      </details>
+
+      <div class="actions">
+        <button type="submit" class="primary">Save Entry</button>
+        <button type="button" id="resetForm" class="ghost">Reset</button>
+      </div>
+    </form>
+  </section>
+
+  <section class="card">
+    <h2>Totals</h2>
+    <div class="totals-grid">
+      <div><span>Total miles</span><strong id="tMiles">0</strong></div>
+      <div><span>Total gross</span><strong id="tGross">$0.00</strong></div>
+      <div><span>Total reimb</span><strong id="tReimb">$0.00</strong></div>
+      <div><span>Total advances</span><strong id="tAdv">$0.00</strong></div>
+      <div><span>Fuel cost (est.)</span><strong id="tFuel">$0.00</strong></div>
+      <div><span>Fixed costs</span><strong id="tFixed">$0.00</strong></div>
+      <div><span>Your share</span><strong id="tShare">$0.00</strong></div>
+      <div><span>Net (est.)</span><strong id="tNet">$0.00</strong></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Entries</h2>
+    <div class="table-wrap">
+      <table id="entriesTable">
+        <thead>
+          <tr>
+            <th>Date</th><th>Order</th><th>From → To</th>
+            <th>Mi (L/E)</th><th>Gross</th><th>Reimb</th><th>Adv</th>
+            <th>DEF</th><th>Tolls</th><th>Fuel est.</th><th>Take-home est.</th><th></th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <div class="actions">
+      <button id="exportCsv" class="ghost">Export CSV</button>
+      <button id="backupJson" class="ghost">Backup Data (JSON)</button>
+      <label class="filebtn">
+        Restore JSON <input type="file" id="restoreJson" accept="application/json" />
+      </label>
+      <button id="clearAll" class="danger">Clear All</button>
+    </div>
+  </section>
+</main>
+
+<!-- Settings modal -->
+<dialog id="settingsDialog">
+  <form method="dialog" id="settingsForm">
+    <h2>Settings</h2>
+    <div class="grid">
+      <label>Your share (0.35 for 35%)
+        <input type="number" id="sShare" step="0.01" min="0" max="1" />
+      </label>
+      <label>Default pump price ($/gal)
+        <input type="number" id="sPump" step="0.01" min="0" />
+      </label>
+      <label>Fuel discount ($/gal)
+        <input type="number" id="sDisc" step="0.01" min="0" />
+      </label>
+      <label>Truck MPG
+        <input type="number" id="sMpg" step="0.01" min="0" />
+      </label>
+      <label>Fixed costs per week ($)
+        <input type="number" id="sFixed" step="0.01" min="0" />
+      </label>
+      <label>Week starts on
+        <select id="sWeekStart">
+          <option value="1">Monday</option>
+          <option value="0">Sunday</option>
+        </select>
+      </label>
+    </div>
+    <div class="actions">
+      <button value="cancel" class="ghost">Cancel</button>
+      <button id="saveSettings" value="default" class="primary">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<footer class="foot">
+  <small>Driver Daily • Works offline • <span id="installHint">Install from browser menu → “Add to Home Screen”.</span></small>
+</footer>
+
+<script src="script.js"></script>
+<script>
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('./service-worker.js');
+    });
+  }
+</script>
+</body>
+</html>

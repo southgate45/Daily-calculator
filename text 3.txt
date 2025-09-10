@@ -1,0 +1,254 @@
+// --- Simple PWA driver app: localStorage for persistence ---
+
+const $ = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+
+const STORAGE_KEYS = {
+  entries: 'driverdaily:entries',
+  settings: 'driverdaily:settings'
+};
+
+const defaultSettings = {
+  share: 0.35,          // 35%
+  pump: 3.80,
+  discount: 0.30,
+  mpg: 6.5,
+  fixedPerWeek: 1166.78, // example: 550 + 533.03 + 82.00 + 1.75 rounding (adjust!)
+  weekStart: 1          // 1=Mon, 0=Sun
+};
+
+let settings = loadSettings();
+let entries = loadEntries();
+
+function loadSettings(){
+  try{
+    const saved = JSON.parse(localStorage.getItem(STORAGE_KEYS.settings));
+    return {...defaultSettings, ...(saved||{})};
+  }catch(e){ return {...defaultSettings}; }
+}
+function saveSettings(){
+  localStorage.setItem(STORAGE_KEYS.settings, JSON.stringify(settings));
+  renderTotals();
+}
+function loadEntries(){
+  try{
+    const saved = JSON.parse(localStorage.getItem(STORAGE_KEYS.entries));
+    return Array.isArray(saved) ? saved : [];
+  }catch(e){ return []; }
+}
+function saveEntries(){
+  localStorage.setItem(STORAGE_KEYS.entries, JSON.stringify(entries));
+  renderEntries();
+  renderTotals();
+}
+
+function fmtMoney(n){ return n.toLocaleString(undefined,{style:'currency',currency:'USD',maximumFractionDigits:2}); }
+function toNumber(v){ const n=parseFloat(v); return Number.isFinite(n)?n:0; }
+
+function todayISO(){
+  const t = new Date(); const off = t.getTimezoneOffset(); // keep local timezone date
+  const d = new Date(t.getTime() - off*60000);
+  return d.toISOString().slice(0,10);
+}
+
+// ----- FORM -----
+const form = $('#entryForm');
+$('#date').value = todayISO();
+
+$('#resetForm').addEventListener('click', () => form.reset());
+
+form.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const entry = {
+    id: crypto.randomUUID(),
+    date: $('#date').value || todayISO(),
+    order: $('#order').value.trim(),
+    origin: $('#origin').value.trim(),
+    destination: $('#destination').value.trim(),
+    loadedMiles: toNumber($('#loadedMiles').value),
+    emptyMiles: toNumber($('#emptyMiles').value),
+    gross: toNumber($('#gross').value),
+    reimb: toNumber($('#reimb').value),
+    advance: toNumber($('#advance').value),
+    def: toNumber($('#def').value),
+    tolls: toNumber($('#tolls').value),
+    // optional per-day overrides
+    pump: $('#pump').value ? toNumber($('#pump').value) : null,
+    discount: $('#discount').value ? toNumber($('#discount').value) : null,
+    mpg: $('#mpg').value ? toNumber($('#mpg').value) : null
+  };
+  entries.push(entry);
+  saveEntries();
+  form.reset();
+  $('#date').value = todayISO();
+});
+
+// ----- SETTINGS DIALOG -----
+const dlg = $('#settingsDialog');
+$('#openSettings').addEventListener('click', ()=> {
+  $('#sShare').value = settings.share;
+  $('#sPump').value = settings.pump;
+  $('#sDisc').value = settings.discount;
+  $('#sMpg').value = settings.mpg;
+  $('#sFixed').value = settings.fixedPerWeek;
+  $('#sWeekStart').value = String(settings.weekStart);
+  dlg.showModal();
+});
+$('#saveSettings').addEventListener('click', (e)=>{
+  e.preventDefault();
+  settings.share = toNumber($('#sShare').value);
+  settings.pump = toNumber($('#sPump').value);
+  settings.discount = toNumber($('#sDisc').value);
+  settings.mpg = toNumber($('#sMpg').value);
+  settings.fixedPerWeek = toNumber($('#sFixed').value);
+  settings.weekStart = parseInt($('#sWeekStart').value,10);
+  saveSettings();
+  dlg.close();
+});
+
+// ----- RENDER ENTRIES -----
+function fuelCostFor(entry){
+  const pump = entry.pump ?? settings.pump;
+  const disc = entry.discount ?? settings.discount;
+  const mpg  = entry.mpg ?? settings.mpg;
+  const miles = entry.loadedMiles + entry.emptyMiles;
+  if (mpg <= 0) return 0;
+  return (miles / mpg) * Math.max(0, pump - disc);
+}
+function sharePayFor(entry){
+  return settings.share * entry.gross;
+}
+function takeHomeFor(entry){
+  const pay = sharePayFor(entry);
+  const fuel = fuelCostFor(entry);
+  return pay + entry.reimb - entry.advance - (fuel + entry.def + entry.tolls);
+}
+
+function renderEntries(){
+  const tbody = $('#entriesTable tbody');
+  tbody.innerHTML = '';
+  // sort by date asc
+  const sorted = [...entries].sort((a,b)=> (a.date||'').localeCompare(b.date||''));
+  for (const e of sorted){
+    const tr = document.createElement('tr');
+    const route = `${e.origin || '-'} → ${e.destination || '-'}`;
+    const miles = `${e.loadedMiles||0}/${e.emptyMiles||0}`;
+    const fuel = fuelCostFor(e);
+    const net  = takeHomeFor(e);
+    tr.innerHTML = `
+      <td>${e.date || '-'}</td>
+      <td>${e.order || '-'}</td>
+      <td>${route}</td>
+      <td>${miles}</td>
+      <td>${fmtMoney(e.gross)}</td>
+      <td>${fmtMoney(e.reimb)}</td>
+      <td>${fmtMoney(e.advance)}</td>
+      <td>${fmtMoney(e.def)}</td>
+      <td>${fmtMoney(e.tolls)}</td>
+      <td>${fmtMoney(fuel)}</td>
+      <td><span class="badge" style="background:${net>=0?'#12391e':'#3a1111'};color:${net>=0?'#8de29b':'#ffb4b4'}">${fmtMoney(net)}</span></td>
+      <td><button class="ghost" data-id="${e.id}">Delete</button></td>
+    `;
+    tbody.appendChild(tr);
+  }
+  // wire delete buttons
+  tbody.addEventListener('click', (ev)=>{
+    const btn = ev.target.closest('button[data-id]');
+    if (!btn) return;
+    const id = btn.getAttribute('data-id');
+    entries = entries.filter(x=>x.id!==id);
+    saveEntries();
+  }, {once:true});
+}
+renderEntries();
+
+// ----- TOTALS -----
+function weekNumber(d){
+  // ISO-like week depending on settings.weekStart
+  const date = new Date(d+'T00:00:00');
+  // Not strictly necessary; totals are global across all entries
+  return date.getFullYear()*100 + (date.getMonth()+1); // fallback: month bucket
+}
+function renderTotals(){
+  const tMiles = entries.reduce((s,e)=> s + e.loadedMiles + e.emptyMiles, 0);
+  const tGross = entries.reduce((s,e)=> s + e.gross, 0);
+  const tReimb = entries.reduce((s,e)=> s + e.reimb, 0);
+  const tAdv   = entries.reduce((s,e)=> s + e.advance, 0);
+  const tFuel  = entries.reduce((s,e)=> s + fuelCostFor(e), 0);
+  const tDef   = entries.reduce((s,e)=> s + e.def, 0);
+  const tTolls = entries.reduce((s,e)=> s + e.tolls, 0);
+  const tShare = settings.share * tGross;
+
+  // Fixed costs: estimate by weeks spanned (simple: per 7 days)
+  const dates = entries.map(e=> e.date).filter(Boolean).sort();
+  let fixed = 0;
+  if (dates.length){
+    const start = new Date(dates[0]+'T00:00:00');
+    const end   = new Date(dates[dates.length-1]+'T00:00:00');
+    const days = Math.max(1, (end - start)/(1000*3600*24) + 1);
+    const weeks = Math.ceil(days/7);
+    fixed = weeks * settings.fixedPerWeek;
+  } else {
+    fixed = 0;
+  }
+
+  const net = tShare + tReimb - tAdv - (tFuel + tDef + tTolls + fixed);
+
+  $('#tMiles').textContent = tMiles.toLocaleString();
+  $('#tGross').textContent = fmtMoney(tGross);
+  $('#tReimb').textContent = fmtMoney(tReimb);
+  $('#tAdv').textContent   = fmtMoney(tAdv);
+  $('#tFuel').textContent  = fmtMoney(tFuel);
+  $('#tFixed').textContent = fmtMoney(fixed);
+  $('#tShare').textContent = fmtMoney(tShare);
+  $('#tNet').textContent   = fmtMoney(net);
+}
+renderTotals();
+
+// ----- EXPORT/IMPORT -----
+$('#exportCsv').addEventListener('click', ()=>{
+  const headers = ['date','order','origin','destination','loadedMiles','emptyMiles','gross','reimb','advance','def','tolls','pump','discount','mpg'];
+  const rows = [headers.join(',')];
+  for (const e of entries){
+    const cells = headers.map(k=>{
+      const v = e[k] ?? '';
+      const s = (''+v).replace(/"/g,'""');
+      // ensure commas handled
+      return `"${s}"`;
+    });
+    rows.push(cells.join(','));
+  }
+  const blob = new Blob([rows.join('\n')], {type:'text/csv'});
+  const url = URL.createObjectURL(blob);
+  const a = Object.assign(document.createElement('a'), {href:url, download:'driver-daily-entries.csv'});
+  a.click(); URL.revokeObjectURL(url);
+});
+
+$('#backupJson').addEventListener('click', ()=>{
+  const payload = {settings, entries};
+  const blob = new Blob([JSON.stringify(payload,null,2)], {type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = Object.assign(document.createElement('a'), {href:url, download:'driver-daily-backup.json'});
+  a.click(); URL.revokeObjectURL(url);
+});
+
+$('#restoreJson').addEventListener('change', (ev)=>{
+  const file = ev.target.files?.[0];
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try{
+      const obj = JSON.parse(reader.result);
+      if (obj.settings) settings = {...defaultSettings, ...obj.settings};
+      if (Array.isArray(obj.entries)) entries = obj.entries;
+      saveSettings(); saveEntries();
+      alert('Restore complete.');
+    }catch(e){ alert('Invalid JSON file.'); }
+  };
+  reader.readAsText(file);
+});
+
+// Install hint on desktop
+if (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) {
+  $('#installHint').style.display = 'none';
+}
